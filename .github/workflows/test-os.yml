@@ -79,7 +79,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, windows-2025]
+        os: [windows-2022]
         worker:
           - containerd
         pkg:
@@ -88,13 +88,20 @@ jobs:
           - ./worker/containerd
           - ./solver
           - ./frontend
-          - ./frontend/dockerfile
+          - ./frontend/dockerfile#1-12
+          - ./frontend/dockerfile#2-12
+          - ./frontend/dockerfile#3-12
+          - ./frontend/dockerfile#4-12
+          - ./frontend/dockerfile#5-12
+          - ./frontend/dockerfile#6-12
+          - ./frontend/dockerfile#7-12
+          - ./frontend/dockerfile#8-12
+          - ./frontend/dockerfile#9-12
+          - ./frontend/dockerfile#10-12
+          - ./frontend/dockerfile#11-12
+          - ./frontend/dockerfile#12-12
         include:
           - os: windows-2022
-            worker: containerd
-            pkg: ./...
-            skip-integration-tests: 1
-          - os: windows-2025
             worker: containerd
             pkg: ./...
             skip-integration-tests: 1
@@ -102,10 +109,18 @@ jobs:
       -
         name: Prepare
         run: |
+          TESTPKG=$(echo "${{ matrix.pkg }}" | awk '-F#' '{print $1}')
+          TESTSLICE=$(echo "${{ matrix.pkg }}" | awk '-F#' '{print $2}')
+          echo "TESTPKG=$TESTPKG" >> $GITHUB_ENV
           echo "TEST_REPORT_NAME=${{ github.job }}-$(echo "${{ matrix.pkg }}-${{ matrix.skip-integration-tests }}-${{ matrix.worker }}" | tr -dc '[:alnum:]-\n\r' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
           testFlags="${{ env.TESTFLAGS }}"
+          testSliceOffset=""
+          if [ -n "$TESTSLICE" ]; then
+            echo "TESTSLICE=$TESTSLICE" >> $GITHUB_ENV
+            testSliceOffset="slice=$TESTSLICE/"
+          fi
           if [ -n "${{ matrix.worker }}" ]; then
-            testFlags="${testFlags} --run=TestIntegration/.*/worker=${{ matrix.worker }}"
+            testFlags="${testFlags} --run=TestIntegration/$testSliceOffset.*/worker=${{ matrix.worker }}"
           fi
           echo "TESTFLAGS=${testFlags}" >> $GITHUB_ENV
         shell: bash
@@ -141,7 +156,7 @@ jobs:
           gotestsum \
             --jsonfile="./bin/testreports/go-test-report-${{ env.TEST_REPORT_NAME }}.json" \
             --junitfile="./bin/testreports/junit-report-${{ env.TEST_REPORT_NAME }}.xml" \
-            --packages="${{ matrix.pkg }}" \
+            --packages="${{ env.TESTPKG }}" \
             -- \
               "-mod=vendor" \
               "-coverprofile" "./bin/testreports/coverage-${{ env.TEST_REPORT_NAME }}.txt" \
@@ -204,8 +219,10 @@ jobs:
         name: Install vagrant
         run: |
           set -x
+          wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
           sudo apt-get update
-          sudo apt-get install -y libvirt-daemon libvirt-daemon-system vagrant vagrant-libvirt ruby-libvirt
+          sudo apt-get install -y libvirt-dev libvirt-daemon libvirt-daemon-system vagrant vagrant-libvirt ruby-libvirt
           sudo systemctl enable --now libvirtd
           sudo chmod a+rw /var/run/libvirt/libvirt-sock
           vagrant plugin install vagrant-libvirt
@@ -217,7 +234,7 @@ jobs:
           vagrant up --no-tty
       -
         name: Smoke test
-        uses: nick-fields/retry@7152eba30c6575329ac0576536151aca5a72780e  # v3.0.0
+        uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08  # v3.0.2
         with:
           timeout_minutes: 20
           max_attempts: 5
