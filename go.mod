@@ -3,8 +3,9 @@ module github.com/moby/buildkit
 go 1.22.0
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.6.0
-	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v0.4.1
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.16.0
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.8.0
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.5.0
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/Microsoft/hcsshim v0.12.9
 	github.com/agext/levenshtein v1.2.3
@@ -16,7 +17,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.58.2
 	github.com/containerd/console v1.0.4
 	github.com/containerd/containerd/api v1.8.0
-	github.com/containerd/containerd/v2 v2.0.2
+	github.com/containerd/containerd/v2 v2.0.3
 	github.com/containerd/continuity v0.4.5
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/fuse-overlayfs-snapshotter/v2 v2.1.1
@@ -31,8 +32,8 @@ require (
 	github.com/containernetworking/plugins v1.5.1
 	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/distribution/reference v0.6.0
-	github.com/docker/cli v28.0.0-rc.1+incompatible
-	github.com/docker/docker v28.0.0-rc.1+incompatible
+	github.com/docker/cli v28.0.1+incompatible
+	github.com/docker/docker v28.0.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/docker/go-units v0.5.0
 	github.com/gofrs/flock v0.12.1
@@ -59,7 +60,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.0
 	github.com/opencontainers/runtime-spec v1.2.0
 	github.com/opencontainers/selinux v1.11.1
-	github.com/package-url/packageurl-go v0.1.1-0.20220428063043-89078438f170
+	github.com/package-url/packageurl-go v0.1.1
 	github.com/pelletier/go-toml v1.9.5
 	github.com/pkg/errors v0.9.1
 	github.com/pkg/profile v1.7.0
@@ -71,8 +72,8 @@ require (
 	github.com/spdx/tools-golang v0.5.3
 	github.com/stretchr/testify v1.10.0
 	github.com/tonistiigi/dchapes-mode v0.0.0-20241001053921-ca0759fec205
-	github.com/tonistiigi/fsutil v0.0.0-20250113203817-b14e27f4135a
-	github.com/tonistiigi/go-actions-cache v0.0.0-20241210095730-017636a73805
+	github.com/tonistiigi/fsutil v0.0.0-20250227023350-13604323a291
+	github.com/tonistiigi/go-actions-cache v0.0.0-20250228231703-3e9a6642607f
 	github.com/tonistiigi/go-archvariant v1.0.0
 	github.com/tonistiigi/go-csvvalue v0.0.0-20240710180619-ddb21b71c0b4
 	github.com/tonistiigi/units v0.0.0-20180711220420-6950e57a87ea
@@ -107,14 +108,14 @@ require (
 	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.5.1
 	google.golang.org/protobuf v1.35.2
 	kernel.org/pub/linux/libs/security/libcap/cap v1.2.73
+	tags.cncf.io/container-device-interface v0.8.1
 )
 
 require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20240806141605-e8a1dd7889d6 // indirect
 	github.com/AdamKorcz/go-118-fuzz-build v0.0.0-20231105174938-2b5cbb29f3e2 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.11.1 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.8.0 // indirect
-	github.com/AzureAD/microsoft-authentication-library-for-go v1.2.2 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.10.0 // indirect
+	github.com/AzureAD/microsoft-authentication-library-for-go v1.3.2 // indirect
 	github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.3 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.11 // indirect
@@ -161,7 +162,6 @@ require (
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/moby/sys/mount v0.3.4 // indirect
 	github.com/moby/sys/sequential v0.6.0 // indirect
-	github.com/moby/term v0.5.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/opencontainers/runtime-tools v0.9.1-0.20221107090550-2e043c6bd626 // indirect
 	github.com/petermattis/goid v0.0.0-20240813172612-4fcff4a6cae7 // indirect
@@ -183,7 +183,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	kernel.org/pub/linux/libs/security/libcap/psx v1.2.73 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect
-	tags.cncf.io/container-device-interface v0.8.0 // indirect
 	tags.cncf.io/container-device-interface/specs-go v0.8.0 // indirect
 )
 
