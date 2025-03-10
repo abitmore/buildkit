@@ -213,8 +213,7 @@ func buildAction(clicontext *cli.Context) error {
 		attachable = append(attachable, secretProvider)
 	}
 
-	allowed, err := build.ParseAllow(clicontext.StringSlice("allow"))
-	if err != nil {
+	if err := build.ValidateAllow(clicontext.StringSlice("allow")); err != nil {
 		return err
 	}
 
@@ -258,7 +257,7 @@ func buildAction(clicontext *cli.Context) error {
 		CacheExports:        cacheExports,
 		CacheImports:        cacheImports,
 		Session:             attachable,
-		AllowedEntitlements: allowed,
+		AllowedEntitlements: clicontext.StringSlice("allow"),
 		SourcePolicy:        srcPol,
 		Ref:                 ref,
 	}
@@ -434,14 +433,14 @@ func buildAction(clicontext *cli.Context) error {
 }
 
 func writeMetadataFile(filename string, exporterResponse map[string]string) error {
-	out := make(map[string]interface{})
+	out := make(map[string]any)
 	for k, v := range exporterResponse {
 		dt, err := base64.StdEncoding.DecodeString(v)
 		if err != nil {
 			out[k] = v
 			continue
 		}
-		var raw map[string]interface{}
+		var raw map[string]any
 		if err = json.Unmarshal(dt, &raw); err != nil || len(raw) == 0 {
 			out[k] = v
 			continue

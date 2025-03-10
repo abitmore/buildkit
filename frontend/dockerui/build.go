@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
@@ -54,9 +55,11 @@ func (bc *Client) Build(ctx context.Context, fn BuildFunc) (*ResultBuilder, erro
 				}
 			}
 
-			p := platforms.DefaultSpec()
+			var p ocispecs.Platform
 			if tp != nil {
 				p = *tp
+			} else {
+				p = platforms.DefaultSpec()
 			}
 
 			// in certain conditions we allow input platform to be extended from base image
@@ -65,7 +68,7 @@ func (bc *Client) Build(ctx context.Context, fn BuildFunc) (*ResultBuilder, erro
 					p.OSVersion = img.OSVersion
 				}
 				if p.OSFeatures == nil && len(img.OSFeatures) > 0 {
-					p.OSFeatures = append([]string{}, img.OSFeatures...)
+					p.OSFeatures = slices.Clone(img.OSFeatures)
 				}
 			}
 

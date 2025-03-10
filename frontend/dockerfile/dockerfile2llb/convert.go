@@ -503,7 +503,7 @@ func toDispatchState(ctx context.Context, dt []byte, opt ConvertOpt) (*dispatchS
 											OSVersion:    img.OSVersion,
 										}
 										if img.OSFeatures != nil {
-											d.platform.OSFeatures = append([]string{}, img.OSFeatures...)
+											d.platform.OSFeatures = slices.Clone(img.OSFeatures)
 										}
 									}
 								}
@@ -724,6 +724,7 @@ func toDispatchState(ctx context.Context, dt []byte, opt ConvertOpt) (*dispatchS
 			extraHosts:          opt.ExtraHosts,
 			shmSize:             opt.ShmSize,
 			ulimit:              opt.Ulimits,
+			devices:             opt.Devices,
 			cgroupParent:        opt.CgroupParent,
 			llbCaps:             opt.LLBCaps,
 			sourceMap:           opt.SourceMap,
@@ -801,14 +802,20 @@ func toDispatchState(ctx context.Context, dt []byte, opt ConvertOpt) (*dispatchS
 	target.state = target.state.SetMarshalDefaults(defaults...)
 
 	if !platformOpt.implicitTarget {
+		sameOsArch := platformOpt.targetPlatform.OS == target.image.OS && platformOpt.targetPlatform.Architecture == target.image.Architecture
 		target.image.OS = platformOpt.targetPlatform.OS
 		target.image.Architecture = platformOpt.targetPlatform.Architecture
-		target.image.Variant = platformOpt.targetPlatform.Variant
-		target.image.OSVersion = platformOpt.targetPlatform.OSVersion
+		if platformOpt.targetPlatform.Variant != "" || !sameOsArch {
+			target.image.Variant = platformOpt.targetPlatform.Variant
+		}
+		if platformOpt.targetPlatform.OSVersion != "" || !sameOsArch {
+			target.image.OSVersion = platformOpt.targetPlatform.OSVersion
+		}
 		if platformOpt.targetPlatform.OSFeatures != nil {
-			target.image.OSFeatures = append([]string{}, platformOpt.targetPlatform.OSFeatures...)
+			target.image.OSFeatures = slices.Clone(platformOpt.targetPlatform.OSFeatures)
 		}
 	}
+	target.image.Platform = platforms.Normalize(target.image.Platform)
 
 	return target, nil
 }
@@ -859,6 +866,7 @@ type dispatchOpt struct {
 	extraHosts          []llb.HostIP
 	shmSize             int64
 	ulimit              []*pb.Ulimit
+	devices             []*pb.CDIDevice
 	cgroupParent        string
 	llbCaps             *apicaps.CapSet
 	sourceMap           *llb.SourceMap
@@ -1303,6 +1311,23 @@ func dispatchRun(d *dispatchState, c *instructions.RunCommand, proxy *llb.ProxyE
 		}
 	}
 
+	if dopt.llbCaps != nil && dopt.llbCaps.Supports(pb.CapExecMetaCDI) == nil {
+		for _, device := range dopt.devices {
+			deviceOpts := []llb.CDIDeviceOption{
+				llb.CDIDeviceName(device.Name),
+			}
+			if device.Optional {
+				deviceOpts = append(deviceOpts, llb.CDIDeviceOptional)
+			}
+			opt = append(opt, llb.AddCDIDevice(deviceOpts...))
+		}
+		runDevices, err := dispatchRunDevices(c)
+		if err != nil {
+			return err
+		}
+		opt = append(opt, runDevices...)
+	}
+
 	shlex := *dopt.shlex
 	shlex.RawQuotes = true
 	shlex.SkipUnsetEnv = true
@@ -1419,18 +1444,14 @@ func dispatchCopy(d *dispatchState, cfg copyConfig) error {
 			}
 			chopt.Mode = os.FileMode(p)
 		} else {
-			if featureCopyChmodNonOctalEnabled {
-				if _, err := mode.Parse(cfg.chmod); err != nil {
-					var ne *strconv.NumError
-					if errors.As(err, &ne) {
-						return nonOctalErr // return nonOctalErr for compatibility if the value looks numeric
-					}
-					return err
+			if _, err := mode.Parse(cfg.chmod); err != nil {
+				var ne *strconv.NumError
+				if errors.As(err, &ne) {
+					return nonOctalErr // return nonOctalErr for compatibility if the value looks numeric
 				}
-				chopt.ModeStr = cfg.chmod
-			} else {
-				return nonOctalErr
+				return err
 			}
+			chopt.ModeStr = cfg.chmod
 		}
 	}
 
@@ -1579,7 +1600,7 @@ func dispatchCopy(d *dispatchState, cfg copyConfig) error {
 		commitMessage.WriteString(" <<" + src.Path)
 
 		data := src.Data
-		f, err := system.CheckSystemDriveAndRemoveDriveLetter(src.Path, d.platform.OS)
+		f, err := system.CheckSystemDriveAndRemoveDriveLetter(src.Path, d.platform.OS, false)
 		if err != nil {
 			return errors.Wrap(err, "removing drive letter")
 		}
@@ -1623,7 +1644,7 @@ func dispatchCopy(d *dispatchState, cfg copyConfig) error {
 		copyOpts = append(copyOpts, fileOpt...)
 		copyOpts = append(copyOpts, llb.ProgressGroup(pgID, pgName, true))
 
-		mergeOpts := append([]llb.ConstraintsOpt{}, fileOpt...)
+		mergeOpts := slices.Clone(fileOpt)
 		d.cmdIndex--
 		mergeOpts = append(mergeOpts, llb.ProgressGroup(pgID, pgName, false), llb.WithCustomName(prefixCommand(d, "LINK "+name, d.prefixPlatform, &platform, env)))
 
@@ -1847,7 +1868,7 @@ func pathRelativeToWorkingDir(s llb.State, p string, platform ocispecs.Platform)
 		return "", err
 	}
 
-	p, err = system.CheckSystemDriveAndRemoveDriveLetter(p, platform.OS)
+	p, err = system.CheckSystemDriveAndRemoveDriveLetter(p, platform.OS, true)
 	if err != nil {
 		return "", errors.Wrap(err, "removing drive letter")
 	}
@@ -1890,7 +1911,7 @@ func parseKeyValue(env string) (string, string) {
 	return parts[0], v
 }
 
-func dfCmd(cmd interface{}) llb.ConstraintsOpt {
+func dfCmd(cmd any) llb.ConstraintsOpt {
 	// TODO: add fmt.Stringer to instructions.Command to remove interface{}
 	var cmdStr string
 	if cmd, ok := cmd.(fmt.Stringer); ok {
@@ -2033,9 +2054,7 @@ func normalizeContextPaths(paths map[string]struct{}) []string {
 		pathSlice = append(pathSlice, path.Join(".", p))
 	}
 
-	sort.Slice(pathSlice, func(i, j int) bool {
-		return pathSlice[i] < pathSlice[j]
-	})
+	slices.Sort(pathSlice)
 	return pathSlice
 }
 
@@ -2086,7 +2105,7 @@ type mutableOutput struct {
 func withShell(img dockerspec.DockerOCIImage, args []string) []string {
 	var shell []string
 	if len(img.Config.Shell) > 0 {
-		shell = append([]string{}, img.Config.Shell...)
+		shell = slices.Clone(img.Config.Shell)
 	} else {
 		shell = defaultShell(img.OS)
 	}
@@ -2251,12 +2270,7 @@ func isEnabledForStage(stage string, value string) bool {
 	}
 
 	vv := strings.Split(value, ",")
-	for _, v := range vv {
-		if v == stage {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(vv, stage)
 }
 
 func isSelfConsistentCasing(s string) bool {
@@ -2589,8 +2603,20 @@ func buildMetaArgs(args *llb.EnvList, shlex *shell.Lex, argCommands []instructio
 					if err != nil {
 						return nil, nil, parser.WithLocation(err, cmd.Location())
 					}
+
 					kp.Value = &result.Result
 					info.deps = result.Matched
+					if _, ok := result.Matched[kp.Key]; ok {
+						delete(info.deps, kp.Key)
+						if old, ok := allArgs[kp.Key]; ok {
+							for k := range old.deps {
+								if info.deps == nil {
+									info.deps = make(map[string]struct{})
+								}
+								info.deps[k] = struct{}{}
+							}
+						}
+					}
 				}
 			} else {
 				kp.Value = &v

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -58,14 +60,16 @@ type Sandbox interface {
 	PrintLogs(*testing.T)
 	ClearLogs()
 	NewRegistry() (string, error)
-	Value(string) interface{} // chosen matrix value
+	Value(string) any // chosen matrix value
 	Name() string
+	CDISpecDir() string
 }
 
 // BackendConfig is used to configure backends created by a worker.
 type BackendConfig struct {
 	Logs         map[string]*bytes.Buffer
 	DaemonConfig []ConfigUpdater
+	CDISpecDir   string
 }
 
 type Worker interface {
@@ -127,10 +131,10 @@ func List() []Worker {
 // tests.
 type TestOpt func(*testConf)
 
-func WithMatrix(key string, m map[string]interface{}) TestOpt {
+func WithMatrix(key string, m map[string]any) TestOpt {
 	return func(tc *testConf) {
 		if tc.matrix == nil {
-			tc.matrix = map[string]map[string]interface{}{}
+			tc.matrix = map[string]map[string]any{}
 		}
 		tc.matrix[key] = m
 	}
@@ -146,7 +150,7 @@ func WithMirroredImages(m map[string]string) TestOpt {
 }
 
 type testConf struct {
-	matrix         map[string]map[string]interface{}
+	matrix         map[string]map[string]any
 	mirroredImages map[string]string
 }
 
@@ -157,6 +161,29 @@ func Run(t *testing.T, testCases []Test, opt ...TestOpt) {
 
 	if os.Getenv("SKIP_INTEGRATION_TESTS") == "1" {
 		t.Skip("skipping integration tests")
+	}
+
+	var sliceSplit int
+	if filter, ok := lookupTestFilter(); ok {
+		parts := strings.Split(filter, "/")
+		if len(parts) >= 2 {
+			const prefix = "slice="
+			if strings.HasPrefix(parts[1], prefix) {
+				conf := strings.TrimPrefix(parts[1], prefix)
+				offsetS, totalS, ok := strings.Cut(conf, "-")
+				if !ok {
+					t.Fatalf("invalid slice=%q", conf)
+				}
+				offset, err := strconv.Atoi(offsetS)
+				require.NoError(t, err)
+				total, err := strconv.Atoi(totalS)
+				require.NoError(t, err)
+				if offset < 1 || total < 1 || offset > total {
+					t.Fatalf("invalid slice=%q", conf)
+				}
+				sliceSplit = total
+			}
+		}
 	}
 
 	var tc testConf
@@ -180,9 +207,14 @@ func Run(t *testing.T, testCases []Test, opt ...TestOpt) {
 	})
 
 	for _, br := range list {
-		for _, tc := range testCases {
+		for i, tc := range testCases {
 			for _, mv := range matrix {
 				fn := tc.Name()
+				if sliceSplit > 0 {
+					pageLimit := int(math.Ceil(float64(len(testCases)) / float64(sliceSplit)))
+					sliceName := fmt.Sprintf("slice=%d-%d/", i/pageLimit+1, sliceSplit)
+					fn = sliceName + fn
+				}
 				name := fn + "/worker=" + br.Name() + mv.functionSuffix()
 				func(fn, testName string, br Worker, tc Test, mv matrixValue) {
 					ok := t.Run(testName, func(t *testing.T) {
@@ -219,7 +251,7 @@ func Run(t *testing.T, testCases []Test, opt ...TestOpt) {
 	}
 }
 
-func getFunctionName(i interface{}) string {
+func getFunctionName(i any) string {
 	fullname := runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
 	dot := strings.LastIndex(fullname, ".") + 1
 	return strings.Title(fullname[dot:]) //nolint:staticcheck // ignoring "SA1019: strings.Title is deprecated", as for our use we don't need full unicode support
@@ -398,10 +430,10 @@ func (mv matrixValue) functionSuffix() string {
 
 type matrixValueChoice struct {
 	name  string
-	value interface{}
+	value any
 }
 
-func newMatrixValue(key, name string, v interface{}) matrixValue {
+func newMatrixValue(key, name string, v any) matrixValue {
 	return matrixValue{
 		fn: []string{key},
 		values: map[string]matrixValueChoice{
@@ -460,4 +492,14 @@ func UnixOrWindows[T any](unix, windows T) T {
 		return windows
 	}
 	return unix
+}
+
+func lookupTestFilter() (string, bool) {
+	const prefix = "-test.run="
+	for _, arg := range os.Args {
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix), true
+		}
+	}
+	return "", false
 }
