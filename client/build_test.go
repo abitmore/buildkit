@@ -68,7 +68,7 @@ func TestClientGatewayIntegration(t *testing.T) {
 		testClientGatewayContainerSecurityModeCaps,
 		testClientGatewayContainerSecurityModeValidation,
 	), integration.WithMirroredImages(integration.OfficialImages("busybox:latest")),
-		integration.WithMatrix("secmode", map[string]interface{}{
+		integration.WithMatrix("secmode", map[string]any{
 			"sandbox":  securitySandbox,
 			"insecure": securityInsecure,
 		}),
@@ -79,7 +79,7 @@ func TestClientGatewayIntegration(t *testing.T) {
 		testClientGatewayContainerHostNetworkingValidation,
 	),
 		integration.WithMirroredImages(integration.OfficialImages("busybox:latest")),
-		integration.WithMatrix("netmode", map[string]interface{}{
+		integration.WithMatrix("netmode", map[string]any{
 			"default": defaultNetwork,
 			"host":    hostNetwork,
 		}),
@@ -1061,7 +1061,7 @@ func newTestPrompt(ctx context.Context, t *testing.T, input io.Writer, output *b
 func (p *testPrompt) String() string { return p.prompt }
 
 func (p *testPrompt) SendExit(status int) {
-	p.input.Write([]byte(fmt.Sprintf("exit %d\n", status)))
+	p.input.Write(fmt.Appendf(nil, "exit %d\n", status))
 }
 
 func (p *testPrompt) Send(cmd string) {
@@ -1838,7 +1838,7 @@ func testClientGatewayContainerSecurityMode(t *testing.T, sb integration.Sandbox
 
 	command := []string{"sh", "-c", `cat /proc/self/status | grep CapEff | cut -f 2`}
 	mode := llb.SecurityModeSandbox
-	var allowedEntitlements []entitlements.Entitlement
+	var allowedEntitlements []string
 	var assertCaps func(caps uint64)
 	secMode := sb.Value("secmode")
 	if secMode == securitySandbox {
@@ -1850,7 +1850,7 @@ func testClientGatewayContainerSecurityMode(t *testing.T, sb integration.Sandbox
 			*/
 			require.Equal(t, uint64(0xa80425fb), caps)
 		}
-		allowedEntitlements = []entitlements.Entitlement{}
+		allowedEntitlements = []string{}
 		if expectFail {
 			return
 		}
@@ -1869,9 +1869,9 @@ func testClientGatewayContainerSecurityMode(t *testing.T, sb integration.Sandbox
 			require.Equal(t, uint64(0x3fffffffff), caps&0x3fffffffff)
 		}
 		mode = llb.SecurityModeInsecure
-		allowedEntitlements = []entitlements.Entitlement{entitlements.EntitlementSecurityInsecure}
+		allowedEntitlements = []string{entitlements.EntitlementSecurityInsecure.String()}
 		if expectFail {
-			allowedEntitlements = []entitlements.Entitlement{}
+			allowedEntitlements = []string{}
 		}
 	}
 
@@ -2046,13 +2046,13 @@ func testClientGatewayContainerHostNetworking(t *testing.T, sb integration.Sandb
 	ctx := sb.Context()
 	product := "buildkit_test"
 
-	var allowedEntitlements []entitlements.Entitlement
+	var allowedEntitlements []string
 	netMode := pb.NetMode_UNSET
 	if sb.Value("netmode") == hostNetwork {
 		netMode = pb.NetMode_HOST
-		allowedEntitlements = []entitlements.Entitlement{entitlements.EntitlementNetworkHost}
+		allowedEntitlements = []string{entitlements.EntitlementNetworkHost.String()}
 		if expectFail {
-			allowedEntitlements = []entitlements.Entitlement{}
+			allowedEntitlements = []string{}
 		}
 	}
 	c, err := New(sb.Context(), sb.Address())

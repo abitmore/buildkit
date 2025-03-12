@@ -28,7 +28,7 @@ type ResolveOpFunc func(Vertex, Builder) (Op, error)
 type Builder interface {
 	Build(ctx context.Context, e Edge) (CachedResultWithProvenance, error)
 	InContext(ctx context.Context, f func(ctx context.Context, g session.Group) error) error
-	EachValue(ctx context.Context, key string, fn func(interface{}) error) error
+	EachValue(ctx context.Context, key string, fn func(any) error) error
 }
 
 // Solver provides a shared graph of all the vertexes currently being
@@ -51,9 +51,10 @@ type state struct {
 	parents  map[digest.Digest]struct{}
 	childVtx map[digest.Digest]struct{}
 
-	mpw   *progress.MultiWriter
-	allPw map[progress.Writer]struct{}
-	mspan *tracing.MultiSpan
+	mpw      *progress.MultiWriter
+	allPw    map[progress.Writer]struct{}
+	mspan    *tracing.MultiSpan
+	execSpan trace.Span
 
 	vtx          Vertex
 	clientVertex client.Vertex
@@ -283,7 +284,7 @@ func (sb *subBuilder) InContext(ctx context.Context, f func(context.Context, ses
 	return f(ctx, sb.state)
 }
 
-func (sb *subBuilder) EachValue(ctx context.Context, key string, fn func(interface{}) error) error {
+func (sb *subBuilder) EachValue(ctx context.Context, key string, fn func(any) error) error {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
 	for j := range sb.jobs {
@@ -465,7 +466,7 @@ func (jl *Solver) loadUnlocked(ctx context.Context, v, parent Vertex, j *Job, ca
 
 	dgst := v.Digest()
 
-	dgstWithoutCache := digest.FromBytes([]byte(fmt.Sprintf("%s-ignorecache", dgst)))
+	dgstWithoutCache := digest.FromBytes(fmt.Appendf(nil, "%s-ignorecache", dgst))
 
 	// if same vertex is already loaded without cache just use that
 	st, ok := jl.actives[dgstWithoutCache]
@@ -810,11 +811,11 @@ func (j *Job) InContext(ctx context.Context, f func(context.Context, session.Gro
 	return f(progress.WithProgress(ctx, j.pw), session.NewGroup(j.SessionID))
 }
 
-func (j *Job) SetValue(key string, v interface{}) {
+func (j *Job) SetValue(key string, v any) {
 	j.values.Store(key, v)
 }
 
-func (j *Job) EachValue(ctx context.Context, key string, fn func(interface{}) error) error {
+func (j *Job) EachValue(ctx context.Context, key string, fn func(any) error) error {
 	v, ok := j.values.Load(key)
 	if ok {
 		return fn(v)
@@ -902,6 +903,7 @@ func (s *sharedOp) LoadCache(ctx context.Context, rec *CacheRecord) (Result, err
 	}
 	// no cache hit. start evaluating the node
 	span, ctx := tracing.StartSpan(ctx, "load cache: "+s.st.vtx.Name(), trace.WithAttributes(attribute.String("vertex", s.st.vtx.Digest().String())))
+	s.st.execSpan = span
 	notifyCompleted := notifyStarted(ctx, &s.st.clientVertex, true)
 	res, err := s.Cache().Load(withAncestorCacheOpts(ctx, s.st), rec)
 	tracing.FinishWithError(span, err)
@@ -938,7 +940,9 @@ func (s *sharedOp) CalcSlowCache(ctx context.Context, index Index, p PreprocessF
 				return "", errors.Errorf("failed to get state for index %d on %v", index, s.st.vtx.Name())
 			}
 			ctx2 := progress.WithProgress(ctx, st.mpw)
-			if st.mspan.Span != nil {
+			if st.execSpan != nil {
+				ctx2 = trace.ContextWithSpan(ctx2, st.execSpan)
+			} else if st.mspan.Span != nil {
 				ctx2 = trace.ContextWithSpan(ctx2, st.mspan)
 			}
 			err = p(ctx2, res, st)
@@ -1036,7 +1040,7 @@ func (s *sharedOp) CacheMap(ctx context.Context, index int) (resp *cacheMapResp,
 		if complete {
 			if err == nil {
 				if res.Opts == nil {
-					res.Opts = CacheOpts(make(map[interface{}]interface{}))
+					res.Opts = CacheOpts(make(map[any]any))
 				}
 				res.Opts[progressKey{}] = &controller.Controller{
 					WriterFactory: progress.FromContext(ctx),
@@ -1093,6 +1097,7 @@ func (s *sharedOp) Exec(ctx context.Context, inputs []Result) (outputs []Result,
 
 		// no cache hit. start evaluating the node
 		span, ctx := tracing.StartSpan(ctx, s.st.vtx.Name(), trace.WithAttributes(attribute.String("vertex", s.st.vtx.Digest().String())))
+		s.st.execSpan = span
 		notifyCompleted := notifyStarted(ctx, &s.st.clientVertex, false)
 		defer func() {
 			tracing.FinishWithError(span, retErr)

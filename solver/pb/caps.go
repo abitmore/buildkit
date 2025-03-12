@@ -31,9 +31,12 @@ const (
 	CapSourceGitSubdir        apicaps.CapID = "source.git.subdir"
 
 	CapSourceHTTP         apicaps.CapID = "source.http"
+	CapSourceHTTPAuth     apicaps.CapID = "source.http.auth"
 	CapSourceHTTPChecksum apicaps.CapID = "source.http.checksum"
 	CapSourceHTTPPerm     apicaps.CapID = "source.http.perm"
-	CapSourceHTTPUIDGID   apicaps.CapID = "soruce.http.uidgid"
+	// NOTE the historical typo
+	CapSourceHTTPUIDGID apicaps.CapID = "soruce.http.uidgid"
+	CapSourceHTTPHeader apicaps.CapID = "source.http.header"
 
 	CapSourceOCILayout apicaps.CapID = "source.ocilayout"
 
@@ -47,6 +50,7 @@ const (
 	CapExecMetaSecurityDeviceWhitelistV1 apicaps.CapID = "exec.meta.security.devices.v1"
 	CapExecMetaSetsDefaultPath           apicaps.CapID = "exec.meta.setsdefaultpath"
 	CapExecMetaUlimit                    apicaps.CapID = "exec.meta.ulimit"
+	CapExecMetaCDI                       apicaps.CapID = "exec.meta.cdi"
 	CapExecMetaRemoveMountStubsRecursive apicaps.CapID = "exec.meta.removemountstubs.recursive"
 	CapExecMountBind                     apicaps.CapID = "exec.mount.bind"
 	CapExecMountBindReadWriteNoOutput    apicaps.CapID = "exec.mount.bind.readwrite-nooutput"
@@ -229,13 +233,25 @@ func init() {
 	})
 
 	Caps.Init(apicaps.Cap{
-		ID:      CapSourceOCILayout,
+		ID:      CapSourceHTTPAuth,
 		Enabled: true,
 		Status:  apicaps.CapStatusExperimental,
 	})
 
 	Caps.Init(apicaps.Cap{
 		ID:      CapSourceHTTPUIDGID,
+		Enabled: true,
+		Status:  apicaps.CapStatusExperimental,
+	})
+
+	Caps.Init(apicaps.Cap{
+		ID:      CapSourceHTTPHeader,
+		Enabled: true,
+		Status:  apicaps.CapStatusExperimental,
+	})
+
+	Caps.Init(apicaps.Cap{
+		ID:      CapSourceOCILayout,
 		Enabled: true,
 		Status:  apicaps.CapStatusExperimental,
 	})
@@ -290,6 +306,12 @@ func init() {
 
 	Caps.Init(apicaps.Cap{
 		ID:      CapExecMetaUlimit,
+		Enabled: true,
+		Status:  apicaps.CapStatusExperimental,
+	})
+
+	Caps.Init(apicaps.Cap{
+		ID:      CapExecMetaCDI,
 		Enabled: true,
 		Status:  apicaps.CapStatusExperimental,
 	})
