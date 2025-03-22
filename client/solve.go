@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/moby/buildkit/solver/pb"
 	spb "github.com/moby/buildkit/sourcepolicy/pb"
 	"github.com/moby/buildkit/util/bklog"
-	"github.com/moby/buildkit/util/entitlements"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/tonistiigi/fsutil"
@@ -45,7 +45,7 @@ type SolveOpt struct {
 	CacheExports          []CacheOptionsEntry
 	CacheImports          []CacheOptionsEntry
 	Session               []session.Attachable
-	AllowedEntitlements   []entitlements.Entitlement
+	AllowedEntitlements   []string
 	SharedSession         *session.Session // TODO: refactor to better session syncing
 	SessionPreInitialized bool             // TODO: refactor to better session syncing
 	Internal              bool
@@ -142,9 +142,7 @@ func (c *Client) solve(ctx context.Context, def *llb.Definition, runGateway runG
 		}
 
 		contentStores := map[string]content.Store{}
-		for key, store := range cacheOpt.contentStores {
-			contentStores[key] = store
-		}
+		maps.Copy(contentStores, cacheOpt.contentStores)
 		for key, store := range opt.OCIStores {
 			key2 := "oci:" + key
 			if _, ok := contentStores[key2]; ok {
@@ -277,7 +275,7 @@ func (c *Client) solve(ctx context.Context, def *llb.Definition, runGateway runG
 			FrontendAttrs:           frontendAttrs,
 			FrontendInputs:          frontendInputs,
 			Cache:                   &cacheOpt.options,
-			Entitlements:            entitlementsToPB(opt.AllowedEntitlements),
+			Entitlements:            slices.Clone(opt.AllowedEntitlements),
 			Internal:                opt.Internal,
 			SourcePolicy:            opt.SourcePolicy,
 		})
@@ -361,7 +359,7 @@ func (c *Client) solve(ctx context.Context, def *llb.Definition, runGateway runG
 		}
 		for _, storePath := range storesToUpdate {
 			names := []ociindex.NameOrTag{ociindex.Tag("latest")}
-			if t, ok := res.ExporterResponse["image.name"]; ok {
+			if t, ok := res.ExporterResponse[exptypes.ExporterImageNameKey]; ok {
 				inp := strings.Split(t, ",")
 				names = make([]ociindex.NameOrTag, len(inp))
 				for i, n := range inp {
@@ -538,9 +536,7 @@ func parseCacheOptions(ctx context.Context, isGateway bool, opt SolveOpt) (*cach
 func prepareMounts(opt *SolveOpt) (map[string]fsutil.FS, error) {
 	// merge local mounts and fallback local directories together
 	mounts := make(map[string]fsutil.FS)
-	for k, mount := range opt.LocalMounts {
-		mounts[k] = mount
-	}
+	maps.Copy(mounts, opt.LocalMounts)
 	for k, dir := range opt.LocalDirs {
 		mount, err := fsutil.NewFS(dir)
 		if err != nil {
@@ -552,12 +548,4 @@ func prepareMounts(opt *SolveOpt) (map[string]fsutil.FS, error) {
 		mounts[k] = mount
 	}
 	return mounts, nil
-}
-
-func entitlementsToPB(entitlements []entitlements.Entitlement) []string {
-	clone := make([]string, len(entitlements))
-	for i, e := range entitlements {
-		clone[i] = string(e)
-	}
-	return clone
 }

@@ -105,6 +105,8 @@ var allTests = []func(t *testing.T, sb integration.Sandbox){
 	testBuildMultiMount,
 	testBuildHTTPSource,
 	testBuildHTTPSourceEtagScope,
+	testBuildHTTPSourceAuthHeaderSecret,
+	testBuildHTTPSourceHeader,
 	testBuildPushAndValidate,
 	testBuildExportWithUncompressed,
 	testBuildExportScratch,
@@ -220,6 +222,7 @@ var allTests = []func(t *testing.T, sb integration.Sandbox){
 	testOCIIndexMediatype,
 	testLayerLimitOnMounts,
 	testFrontendVerifyPlatforms,
+	testFrontendLintSkipVerifyPlatforms,
 	testRunValidExitCodes,
 	testFileOpSymlink,
 }
@@ -250,7 +253,7 @@ func testIntegration(t *testing.T, funcs ...func(t *testing.T, sb integration.Sa
 		testSecurityModeErrors,
 	),
 		mirrors,
-		integration.WithMatrix("secmode", map[string]interface{}{
+		integration.WithMatrix("secmode", map[string]any{
 			"sandbox":  securitySandbox,
 			"insecure": securityInsecure,
 		}),
@@ -260,7 +263,7 @@ func testIntegration(t *testing.T, funcs ...func(t *testing.T, sb integration.Sa
 		testHostNetworking,
 	),
 		mirrors,
-		integration.WithMatrix("netmode", map[string]interface{}{
+		integration.WithMatrix("netmode", map[string]any{
 			"default": defaultNetwork,
 			"host":    hostNetwork,
 		}),
@@ -270,10 +273,19 @@ func testIntegration(t *testing.T, funcs ...func(t *testing.T, sb integration.Sa
 		t,
 		integration.TestFuncs(testBridgeNetworkingDNSNoRootless),
 		mirrors,
-		integration.WithMatrix("netmode", map[string]interface{}{
+		integration.WithMatrix("netmode", map[string]any{
 			"dns": bridgeDNSNetwork,
 		}),
 	)
+
+	integration.Run(t, integration.TestFuncs(
+		testCDI,
+		testCDINotAllowed,
+		testCDIEntitlement,
+		testCDIFirst,
+		testCDIWildcard,
+		testCDIClass,
+	), mirrors)
 }
 
 func newContainerd(cdAddress string) (*ctd.Client, error) {
@@ -392,9 +404,9 @@ func testHostNetworking(t *testing.T, sb integration.Sandbox) {
 		t.SkipNow()
 	}
 	netMode := sb.Value("netmode")
-	var allowedEntitlements []entitlements.Entitlement
+	var allowedEntitlements []string
 	if netMode == hostNetwork {
-		allowedEntitlements = []entitlements.Entitlement{entitlements.EntitlementNetworkHost}
+		allowedEntitlements = []string{entitlements.EntitlementNetworkHost.String()}
 	}
 	c, err := New(sb.Context(), sb.Address())
 	require.NoError(t, err)
@@ -1055,7 +1067,7 @@ func testSecurityMode(t *testing.T, sb integration.Sandbox) {
 	workers.CheckFeatureCompat(t, sb, workers.FeatureSecurityMode)
 	command := `sh -c 'cat /proc/self/status | grep CapEff | cut -f 2 > /out'`
 	mode := llb.SecurityModeSandbox
-	var allowedEntitlements []entitlements.Entitlement
+	var allowedEntitlements []string
 	var assertCaps func(caps uint64)
 	secMode := sb.Value("secmode")
 	if secMode == securitySandbox {
@@ -1067,7 +1079,7 @@ func testSecurityMode(t *testing.T, sb integration.Sandbox) {
 			*/
 			require.Equal(t, uint64(0xa80425fb), caps)
 		}
-		allowedEntitlements = []entitlements.Entitlement{}
+		allowedEntitlements = []string{}
 	} else {
 		assertCaps = func(caps uint64) {
 			/*
@@ -1083,7 +1095,7 @@ func testSecurityMode(t *testing.T, sb integration.Sandbox) {
 			require.Equal(t, uint64(0x3fffffffff), caps&0x3fffffffff)
 		}
 		mode = llb.SecurityModeInsecure
-		allowedEntitlements = []entitlements.Entitlement{entitlements.EntitlementSecurityInsecure}
+		allowedEntitlements = []string{entitlements.EntitlementSecurityInsecure.String()}
 	}
 
 	c, err := New(sb.Context(), sb.Address())
@@ -1130,13 +1142,13 @@ func testSecurityModeSysfs(t *testing.T, sb integration.Sandbox) {
 	}
 
 	mode := llb.SecurityModeSandbox
-	var allowedEntitlements []entitlements.Entitlement
+	var allowedEntitlements []string
 	secMode := sb.Value("secmode")
 	if secMode == securitySandbox {
-		allowedEntitlements = []entitlements.Entitlement{}
+		allowedEntitlements = []string{}
 	} else {
 		mode = llb.SecurityModeInsecure
-		allowedEntitlements = []entitlements.Entitlement{entitlements.EntitlementSecurityInsecure}
+		allowedEntitlements = []string{entitlements.EntitlementSecurityInsecure.String()}
 	}
 
 	c, err := New(sb.Context(), sb.Address())
@@ -1183,7 +1195,7 @@ func testSecurityModeErrors(t *testing.T, sb integration.Sandbox) {
 		require.NoError(t, err)
 
 		_, err = c.Solve(sb.Context(), def, SolveOpt{
-			AllowedEntitlements: []entitlements.Entitlement{entitlements.EntitlementSecurityInsecure},
+			AllowedEntitlements: []string{entitlements.EntitlementSecurityInsecure.String()},
 		}, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "security.insecure is not allowed")
@@ -1217,8 +1229,8 @@ func testFrontendImageNaming(t *testing.T, sb integration.Sandbox) {
 			// Nothing to check
 		},
 		ExporterDocker: func(out, imageName string, exporterResponse map[string]string) {
-			require.Contains(t, exporterResponse, "image.name")
-			require.Equal(t, exporterResponse["image.name"], "docker.io/library/"+imageName)
+			require.Contains(t, exporterResponse, exptypes.ExporterImageNameKey)
+			require.Equal(t, exporterResponse[exptypes.ExporterImageNameKey], "docker.io/library/"+imageName)
 
 			dt, err := os.ReadFile(out)
 			require.NoError(t, err)
@@ -1245,8 +1257,8 @@ func testFrontendImageNaming(t *testing.T, sb integration.Sandbox) {
 			require.Equal(t, imageName, dockerMfst[0].RepoTags[0])
 		},
 		ExporterImage: func(_, imageName string, exporterResponse map[string]string) {
-			require.Contains(t, exporterResponse, "image.name")
-			require.Equal(t, exporterResponse["image.name"], imageName)
+			require.Contains(t, exporterResponse, exptypes.ExporterImageNameKey)
+			require.Equal(t, exporterResponse[exptypes.ExporterImageNameKey], imageName)
 
 			// check if we can pull (requires containerd)
 			cdAddress := sb.ContainerdAddress()
@@ -1560,15 +1572,22 @@ func testLocalSymlinkEscape(t *testing.T, sb integration.Sandbox) {
 }
 
 func testRelativeWorkDir(t *testing.T, sb integration.Sandbox) {
-	requiresLinux(t)
 	c, err := New(sb.Context(), sb.Address())
 	require.NoError(t, err)
 	defer c.Close()
 
-	pwd := llb.Image("docker.io/library/busybox:latest").
+	imgName := integration.UnixOrWindows(
+		"docker.io/library/busybox:latest",
+		"mcr.microsoft.com/windows/nanoserver:ltsc2022",
+	)
+	cmdStr := integration.UnixOrWindows(
+		`sh -c "pwd > /out/pwd"`,
+		`cmd /C "cd > /out/pwd"`,
+	)
+	pwd := llb.Image(imgName).
 		Dir("test1").
 		Dir("test2").
-		Run(llb.Shlex(`sh -c "pwd > /out/pwd"`)).
+		Run(llb.Shlex(cmdStr)).
 		AddMount("/out", llb.Scratch())
 
 	def, err := pwd.Marshal(sb.Context())
@@ -1588,22 +1607,32 @@ func testRelativeWorkDir(t *testing.T, sb integration.Sandbox) {
 
 	dt, err := os.ReadFile(filepath.Join(destDir, "pwd"))
 	require.NoError(t, err)
-	require.Equal(t, []byte("/test1/test2\n"), dt)
+	pathStr := integration.UnixOrWindows(
+		"/test1/test2\n",
+		"C:\\test1\\test2\r\n",
+	)
+	require.Equal(t, []byte(pathStr), dt)
 }
 
 // TODO: remove this test once `client.SolveOpt.LocalDirs`, now marked as deprecated, is removed.
 // For more context on this test, please check:
 // https://github.com/moby/buildkit/pull/4583#pullrequestreview-1847043452
 func testSolverOptLocalDirsStillWorks(t *testing.T, sb integration.Sandbox) {
-	integration.SkipOnPlatform(t, "windows")
-
 	c, err := New(sb.Context(), sb.Address())
 	require.NoError(t, err)
 	defer c.Close()
 
-	out := llb.Image("docker.io/library/busybox:latest").
+	imgName := integration.UnixOrWindows(
+		"docker.io/library/busybox:latest",
+		"mcr.microsoft.com/windows/nanoserver:ltsc2022",
+	)
+	cmdStr := integration.UnixOrWindows(
+		`sh -c "/bin/rev < input.txt > /out/output.txt"`,
+		`cmd /C "type input.txt > /out/output.txt"`,
+	)
+	out := llb.Image(imgName).
 		File(llb.Copy(llb.Local("mylocal"), "input.txt", "input.txt")).
-		Run(llb.Shlex(`sh -c "/bin/rev < input.txt > /out/output.txt"`)).
+		Run(llb.Shlex(cmdStr)).
 		AddMount(`/out`, llb.Scratch())
 
 	def, err := out.Marshal(sb.Context())
@@ -1631,7 +1660,12 @@ func testSolverOptLocalDirsStillWorks(t *testing.T, sb integration.Sandbox) {
 
 	dt, err := os.ReadFile(filepath.Join(destDir.Name, "output.txt"))
 	require.NoError(t, err)
-	require.Equal(t, []byte("dlroW olleH"), dt)
+	// not reversed on Windows since there's no handy rev utility
+	revStr := integration.UnixOrWindows(
+		"dlroW olleH",
+		"Hello World",
+	)
+	require.Equal(t, []byte(revStr), dt)
 }
 
 func testFileOpMkdirMkfile(t *testing.T, sb integration.Sandbox) {
@@ -2977,6 +3011,86 @@ func testBuildHTTPSourceEtagScope(t *testing.T, sb integration.Sandbox) {
 	require.NoError(t, os.RemoveAll(filepath.Join(out2, "foo")))
 }
 
+func testBuildHTTPSourceAuthHeaderSecret(t *testing.T, sb integration.Sandbox) {
+	c, err := New(sb.Context(), sb.Address())
+	require.NoError(t, err)
+	defer c.Close()
+
+	modTime := time.Now().Add(-24 * time.Hour) // avoid false positive with current time
+
+	resp := httpserver.Response{
+		Etag:         identity.NewID(),
+		Content:      []byte("content1"),
+		LastModified: &modTime,
+	}
+
+	server := httpserver.NewTestServer(map[string]httpserver.Response{
+		"/foo": resp,
+	})
+	defer server.Close()
+
+	st := llb.HTTP(server.URL+"/foo", llb.AuthHeaderSecret("http-secret"))
+
+	def, err := st.Marshal(sb.Context())
+	require.NoError(t, err)
+
+	_, err = c.Solve(
+		sb.Context(),
+		def,
+		SolveOpt{
+			Session: []session.Attachable{secretsprovider.FromMap(map[string][]byte{
+				"http-secret": []byte("Bearer foo"),
+			})},
+		},
+		nil,
+	)
+	require.NoError(t, err)
+
+	allReqs := server.Stats("/foo").Requests
+	require.Equal(t, 1, len(allReqs))
+	require.Equal(t, http.MethodGet, allReqs[0].Method)
+	require.Equal(t, "Bearer foo", allReqs[0].Header.Get("Authorization"))
+}
+
+func testBuildHTTPSourceHeader(t *testing.T, sb integration.Sandbox) {
+	c, err := New(sb.Context(), sb.Address())
+	require.NoError(t, err)
+	defer c.Close()
+
+	modTime := time.Now().Add(-24 * time.Hour) // avoid falso positive with current time
+
+	resp := httpserver.Response{
+		Etag:         identity.NewID(),
+		Content:      []byte("content1"),
+		LastModified: &modTime,
+	}
+
+	server := httpserver.NewTestServer(map[string]httpserver.Response{
+		"/foo": resp,
+	})
+	defer server.Close()
+
+	st := llb.HTTP(
+		server.URL+"/foo",
+		llb.Header(llb.HTTPHeader{
+			Accept:    "application/vnd.foo",
+			UserAgent: "fooagent",
+		}),
+	)
+
+	def, err := st.Marshal(sb.Context())
+	require.NoError(t, err)
+
+	_, err = c.Solve(sb.Context(), def, SolveOpt{}, nil)
+	require.NoError(t, err)
+
+	allReqs := server.Stats("/foo").Requests
+	require.Equal(t, 1, len(allReqs))
+	require.Equal(t, http.MethodGet, allReqs[0].Method)
+	require.Equal(t, "application/vnd.foo", allReqs[0].Header.Get("accept"))
+	require.Equal(t, "fooagent", allReqs[0].Header.Get("user-agent"))
+}
+
 func testResolveAndHosts(t *testing.T, sb integration.Sandbox) {
 	requiresLinux(t)
 	c, err := New(sb.Context(), sb.Address())
@@ -3177,9 +3291,9 @@ func testMultipleExporters(t *testing.T, sb integration.Sandbox) {
 	require.NoError(t, err)
 
 	if workers.IsTestDockerd() {
-		require.Equal(t, resp.ExporterResponse["image.name"], target1+","+target2)
+		require.Equal(t, resp.ExporterResponse[exptypes.ExporterImageNameKey], target1+","+target2)
 	} else {
-		require.Equal(t, resp.ExporterResponse["image.name"], target2)
+		require.Equal(t, resp.ExporterResponse[exptypes.ExporterImageNameKey], target2)
 	}
 	require.FileExists(t, filepath.Join(destDir, "out.tar"))
 	require.FileExists(t, filepath.Join(destDir, "out2.tar"))
@@ -6828,12 +6942,19 @@ func testCacheMountNoCache(t *testing.T, sb integration.Sandbox) {
 }
 
 func testCopyFromEmptyImage(t *testing.T, sb integration.Sandbox) {
-	requiresLinux(t)
 	c, err := New(sb.Context(), sb.Address())
 	require.NoError(t, err)
 	defer c.Close()
 
-	for _, image := range []llb.State{llb.Scratch(), llb.Image("tonistiigi/test:nolayers")} {
+	// On Windows, the error messages are different for the Scratch image
+	// (which is coming from the OS). While the one for the no-layers image
+	// is being returned by Buildkit (in unix style).
+	winErrMsgs := []string{
+		"foo: The system cannot find the file specified", // for llb.Scratch()
+		"/foo: no such file or directory",                // for tonistiigi/test:nolayers
+	}
+
+	for i, image := range []llb.State{llb.Scratch(), llb.Image("tonistiigi/test:nolayers")} {
 		st := llb.Scratch().File(llb.Copy(image, "/", "/"))
 		def, err := st.Marshal(sb.Context())
 		require.NoError(t, err)
@@ -6847,11 +6968,23 @@ func testCopyFromEmptyImage(t *testing.T, sb integration.Sandbox) {
 
 		_, err = c.Solve(sb.Context(), def, SolveOpt{}, nil)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "/foo: no such file or directory")
+		errMsg := integration.UnixOrWindows(
+			"/foo: no such file or directory",
+			winErrMsgs[i],
+		)
+		require.Contains(t, err.Error(), errMsg)
 
-		busybox := llb.Image("busybox:latest")
+		imgName := integration.UnixOrWindows(
+			"busybox:latest",
+			"mcr.microsoft.com/windows/nanoserver:ltsc2022",
+		)
+		busybox := llb.Image(imgName)
 
-		out := busybox.Run(llb.Shlex(`sh -e -c '[ $(ls /scratch | wc -l) = '0' ]'`))
+		cmdStr := integration.UnixOrWindows(
+			`sh -e -c '[ $(ls /scratch | wc -l) = '0' ]'`,
+			`cmd /C dir \scratch`,
+		)
+		out := busybox.Run(llb.Shlex(cmdStr))
 		out.AddMount("/scratch", image, llb.Readonly)
 
 		def, err = out.Marshal(sb.Context())
@@ -7436,8 +7569,8 @@ func testMergeOp(t *testing.T, sb integration.Sandbox) {
 		File(llb.Mkfile("bar/D", 0644, []byte("D"))).
 		File(llb.Mkfile("bar/E", 0755, nil)).
 		File(llb.Mkfile("qaz", 0644, nil)),
-	// /foo from stateE is not here because it is deleted in stateB, which is part of a submerge of mergeD
 	)
+	// /foo from stateE is not here because it is deleted in stateB, which is part of a submerge of mergeD
 }
 
 func testMergeOpCacheInline(t *testing.T, sb integration.Sandbox) {
@@ -7932,9 +8065,9 @@ func requiresLinux(t *testing.T) {
 // cleanup cache because some records still haven't been released.
 // This function tries to ensure prune by retrying it.
 func ensurePruneAll(t *testing.T, c *Client, sb integration.Sandbox) {
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		require.NoError(t, c.Prune(sb.Context(), nil, PruneAll))
-		for j := 0; j < 20; j++ {
+		for range 20 {
 			du, err := c.DiskUsage(sb.Context())
 			require.NoError(t, err)
 			if len(du) == 0 {
@@ -8175,7 +8308,7 @@ func testParallelLocalBuilds(t *testing.T, sb integration.Sandbox) {
 
 	eg, ctx := errgroup.WithContext(ctx)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		func(i int) {
 			eg.Go(func() error {
 				fn := fmt.Sprintf("test%d", i)
@@ -8811,7 +8944,7 @@ func testExportAttestations(t *testing.T, sb integration.Sandbox, ociArtifact bo
 
 			// build image
 			st := llb.Scratch().File(
-				llb.Mkfile("/greeting", 0600, []byte(fmt.Sprintf("hello %s!", pk))),
+				llb.Mkfile("/greeting", 0600, fmt.Appendf(nil, "hello %s!", pk)),
 			)
 			def, err := st.Marshal(ctx)
 			if err != nil {
@@ -8923,7 +9056,7 @@ func testExportAttestations(t *testing.T, sb integration.Sandbox, ociArtifact bo
 			require.NotNil(t, img)
 			require.Equal(t, pk, platforms.Format(*img.Desc.Platform))
 			require.Equal(t, 1, len(img.Layers))
-			require.Equal(t, []byte(fmt.Sprintf("hello %s!", pk)), img.Layers[0]["greeting"].Data)
+			require.Equal(t, fmt.Appendf(nil, "hello %s!", pk), img.Layers[0]["greeting"].Data)
 			bases = append(bases, img)
 		}
 
@@ -8970,7 +9103,7 @@ func testExportAttestations(t *testing.T, sb integration.Sandbox, ociArtifact bo
 
 			require.Equal(t, "https://in-toto.io/Statement/v0.1", attest.Type)
 			require.Equal(t, "https://example.com/attestations/v1.0", attest.PredicateType)
-			require.Equal(t, map[string]interface{}{"success": true}, attest.Predicate)
+			require.Equal(t, map[string]any{"success": true}, attest.Predicate)
 			subjects := []intoto.Subject{
 				{
 					Name: purls[targets[0]],
@@ -9041,7 +9174,7 @@ func testExportAttestations(t *testing.T, sb integration.Sandbox, ociArtifact bo
 
 			require.Equal(t, "https://in-toto.io/Statement/v0.1", attest.Type)
 			require.Equal(t, "https://example.com/attestations/v1.0", attest.PredicateType)
-			require.Equal(t, map[string]interface{}{"success": true}, attest.Predicate)
+			require.Equal(t, map[string]any{"success": true}, attest.Predicate)
 
 			require.Equal(t, []intoto.Subject{{
 				Name:   "greeting",
@@ -9099,7 +9232,7 @@ func testExportAttestations(t *testing.T, sb integration.Sandbox, ociArtifact bo
 
 			require.Equal(t, "https://in-toto.io/Statement/v0.1", attest.Type)
 			require.Equal(t, "https://example.com/attestations/v1.0", attest.PredicateType)
-			require.Equal(t, map[string]interface{}{"success": true}, attest.Predicate)
+			require.Equal(t, map[string]any{"success": true}, attest.Predicate)
 
 			require.Equal(t, []intoto.Subject{{
 				Name:   "greeting",
@@ -9154,7 +9287,7 @@ func testAttestationDefaultSubject(t *testing.T, sb integration.Sandbox) {
 
 			// build image
 			st := llb.Scratch().File(
-				llb.Mkfile("/greeting", 0600, []byte(fmt.Sprintf("hello %s!", pk))),
+				llb.Mkfile("/greeting", 0600, fmt.Appendf(nil, "hello %s!", pk)),
 			)
 			def, err := st.Marshal(ctx)
 			if err != nil {
@@ -9250,7 +9383,7 @@ func testAttestationDefaultSubject(t *testing.T, sb integration.Sandbox) {
 
 		require.Equal(t, "https://in-toto.io/Statement/v0.1", attest.Type)
 		require.Equal(t, "https://example.com/attestations/v1.0", attest.PredicateType)
-		require.Equal(t, map[string]interface{}{"success": true}, attest.Predicate)
+		require.Equal(t, map[string]any{"success": true}, attest.Predicate)
 
 		name := fmt.Sprintf("pkg:docker/%s/buildkit/testattestationsemptysubject@latest?platform=%s", url.QueryEscape(registry), url.QueryEscape(platforms.Format(ps[i])))
 		subjects := []intoto.Subject{{
@@ -9290,7 +9423,7 @@ func testAttestationBundle(t *testing.T, sb integration.Sandbox) {
 
 			// build image
 			st := llb.Scratch().File(
-				llb.Mkfile("/greeting", 0600, []byte(fmt.Sprintf("hello %s!", pk))),
+				llb.Mkfile("/greeting", 0600, fmt.Appendf(nil, "hello %s!", pk)),
 			)
 			def, err := st.Marshal(ctx)
 			if err != nil {
@@ -9317,7 +9450,7 @@ func testAttestationBundle(t *testing.T, sb integration.Sandbox) {
 					Type:          intoto.StatementInTotoV01,
 					PredicateType: "https://example.com/attestations/v1.0",
 				},
-				Predicate: map[string]interface{}{
+				Predicate: map[string]any{
 					"foo": "1",
 				},
 			}
@@ -9402,7 +9535,7 @@ func testAttestationBundle(t *testing.T, sb integration.Sandbox) {
 		require.NoError(t, json.Unmarshal(att.LayersRaw[0], &attest))
 
 		require.Equal(t, "https://example.com/attestations/v1.0", attest.PredicateType)
-		require.Equal(t, map[string]interface{}{"foo": "1"}, attest.Predicate)
+		require.Equal(t, map[string]any{"foo": "1"}, attest.Predicate)
 		name := fmt.Sprintf("pkg:docker/%s/buildkit/testattestationsbundle@latest?platform=%s", url.QueryEscape(registry), url.QueryEscape(platforms.Format(ps[i])))
 		subjects := []intoto.Subject{{
 			Name: name,
@@ -9632,7 +9765,7 @@ EOF
 	require.NoError(t, json.Unmarshal(att.LayersRaw[0], &attest))
 	require.Equal(t, "https://in-toto.io/Statement/v0.1", attest.Type)
 	require.Equal(t, intoto.PredicateSPDX, attest.PredicateType)
-	require.Subset(t, attest.Predicate, map[string]interface{}{"name": "frontend"})
+	require.Subset(t, attest.Predicate, map[string]any{"name": "frontend"})
 
 	// test the specified fallback scanner
 	target = registry + "/buildkit/testsbom3:latest"
@@ -9664,7 +9797,7 @@ EOF
 	require.NoError(t, json.Unmarshal(att.LayersRaw[0], &attest))
 	require.Equal(t, "https://in-toto.io/Statement/v0.1", attest.Type)
 	require.Equal(t, intoto.PredicateSPDX, attest.PredicateType)
-	require.Subset(t, attest.Predicate, map[string]interface{}{"name": "fallback"})
+	require.Subset(t, attest.Predicate, map[string]any{"name": "fallback"})
 
 	// test the builtin frontend scanner and the specified fallback scanner together
 	target = registry + "/buildkit/testsbom3:latest"
@@ -9696,7 +9829,7 @@ EOF
 	require.NoError(t, json.Unmarshal(att.LayersRaw[0], &attest))
 	require.Equal(t, "https://in-toto.io/Statement/v0.1", attest.Type)
 	require.Equal(t, intoto.PredicateSPDX, attest.PredicateType)
-	require.Subset(t, attest.Predicate, map[string]interface{}{"name": "frontend"})
+	require.Subset(t, attest.Predicate, map[string]any{"name": "frontend"})
 
 	// test configuring the scanner (simple)
 	target = registry + "/buildkit/testsbom4:latest"
@@ -9728,8 +9861,8 @@ EOF
 	require.NoError(t, json.Unmarshal(att.LayersRaw[0], &attest))
 	require.Equal(t, "https://in-toto.io/Statement/v0.1", attest.Type)
 	require.Equal(t, intoto.PredicateSPDX, attest.PredicateType)
-	require.Subset(t, attest.Predicate, map[string]interface{}{
-		"extraParams": map[string]interface{}{"ARG1": "foo", "ARG2": "bar"},
+	require.Subset(t, attest.Predicate, map[string]any{
+		"extraParams": map[string]any{"ARG1": "foo", "ARG2": "bar"},
 	})
 
 	// test configuring the scanner (complex)
@@ -9762,8 +9895,8 @@ EOF
 	require.NoError(t, json.Unmarshal(att.LayersRaw[0], &attest))
 	require.Equal(t, "https://in-toto.io/Statement/v0.1", attest.Type)
 	require.Equal(t, intoto.PredicateSPDX, attest.PredicateType)
-	require.Subset(t, attest.Predicate, map[string]interface{}{
-		"extraParams": map[string]interface{}{"ARG1": "foo", "ARG2": "hello,world"},
+	require.Subset(t, attest.Predicate, map[string]any{
+		"extraParams": map[string]any{"ARG1": "foo", "ARG2": "hello,world"},
 	})
 }
 
@@ -9932,7 +10065,7 @@ EOF
 	require.NoError(t, json.Unmarshal(att.LayersRaw[0], &attest))
 	require.Equal(t, "https://in-toto.io/Statement/v0.1", attest.Type)
 	require.Equal(t, intoto.PredicateSPDX, attest.PredicateType)
-	require.Subset(t, attest.Predicate, map[string]interface{}{"name": "fallback"})
+	require.Subset(t, attest.Predicate, map[string]any{"name": "fallback"})
 }
 
 func testSBOMSupplements(t *testing.T, sb integration.Sandbox) {
@@ -10447,6 +10580,52 @@ func testFrontendVerifyPlatforms(t *testing.T, sb integration.Sandbox) {
 	require.Contains(t, string(warnings[0].Short), "do not match result platforms linux/amd64,linux/arm64")
 }
 
+func testFrontendLintSkipVerifyPlatforms(t *testing.T, sb integration.Sandbox) {
+	c, err := New(sb.Context(), sb.Address())
+	require.NoError(t, err)
+	defer c.Close()
+
+	frontend := func(ctx context.Context, c gateway.Client) (*gateway.Result, error) {
+		dockerfile := `
+FROM scratch
+COPY foo /foo
+    `
+		st := llb.Scratch().File(
+			llb.Mkfile("Dockerfile", 0600, []byte(dockerfile)).
+				Mkfile("foo", 0600, []byte("data")))
+
+		def, err := st.Marshal(sb.Context())
+		if err != nil {
+			return nil, err
+		}
+
+		return c.Solve(ctx, gateway.SolveRequest{
+			FrontendInputs: map[string]*pb.Definition{
+				"context":    def.ToPB(),
+				"dockerfile": def.ToPB(),
+			},
+			FrontendOpt: map[string]string{
+				"requestid":     "frontend.lint",
+				"frontend.caps": "moby.buildkit.frontend.subrequests",
+			},
+		})
+	}
+
+	wc := newWarningsCapture()
+	_, err = c.Build(sb.Context(), SolveOpt{
+		FrontendAttrs: map[string]string{
+			"platform": "linux/amd64,linux/arm64",
+		},
+	}, "", frontend, wc.status)
+	require.NoError(t, err)
+	warnings := wc.wait()
+
+	for _, w := range warnings {
+		t.Logf("warning: %s", string(w.Short))
+	}
+	require.Len(t, warnings, 0)
+}
+
 type warningsCapture struct {
 	status     chan *SolveStatus
 	statusDone chan struct{}
@@ -10846,7 +11025,7 @@ func testLLBMountPerformance(t *testing.T, sb integration.Sandbox) {
 	mntInput := llb.Image("busybox:latest")
 	st := llb.Image("busybox:latest")
 	var mnts []llb.State
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		execSt := st.Run(
 			llb.Args([]string{"true"}),
 		)
@@ -10879,7 +11058,7 @@ func testLayerLimitOnMounts(t *testing.T, sb integration.Sandbox) {
 
 	const numLayers = 110
 
-	for i := 0; i < numLayers; i++ {
+	for range numLayers {
 		base = base.Run(llb.Shlex("sh -c 'echo hello >> /hello'")).Root()
 	}
 
@@ -10906,10 +11085,11 @@ func testClientCustomGRPCOpts(t *testing.T, sb integration.Sandbox) {
 		ctx context.Context,
 		method string,
 		req,
-		reply interface{},
+		reply any,
 		cc *grpc.ClientConn,
 		invoker grpc.UnaryInvoker,
-		opts ...grpc.CallOption) error {
+		opts ...grpc.CallOption,
+	) error {
 		interceptedMethods = append(interceptedMethods, method)
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}
@@ -10985,4 +11165,369 @@ func (w warningsListOutput) String() string {
 		_, _ = b.Write(warn.Short)
 	}
 	return b.String()
+}
+
+func testCDI(t *testing.T, sb integration.Sandbox) {
+	if sb.Rootless() {
+		t.SkipNow()
+	}
+
+	integration.SkipOnPlatform(t, "windows")
+	workers.CheckFeatureCompat(t, sb, workers.FeatureCDI)
+	c, err := New(sb.Context(), sb.Address())
+	require.NoError(t, err)
+	defer c.Close()
+
+	require.NoError(t, os.WriteFile(filepath.Join(sb.CDISpecDir(), "vendor1-device.yaml"), []byte(`
+cdiVersion: "0.6.0"
+kind: "vendor1.com/device"
+devices:
+- name: foo
+  containerEdits:
+    env:
+    - FOO=injected
+annotations:
+  org.mobyproject.buildkit.device.autoallow: true
+`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(sb.CDISpecDir(), "vendor2-device.yaml"), []byte(`
+cdiVersion: "0.6.0"
+kind: "vendor2.com/device"
+devices:
+- name: bar
+  containerEdits:
+    env:
+    - BAR=injected
+annotations:
+  org.mobyproject.buildkit.device.autoallow: true
+`), 0600))
+
+	busybox := llb.Image("busybox:latest")
+	st := llb.Scratch()
+
+	run := func(cmd string, ro ...llb.RunOption) {
+		st = busybox.Run(append(ro, llb.Shlex(cmd), llb.Dir("/wd"))...).AddMount("/wd", st)
+	}
+
+	run(`sh -c 'env|sort | tee foo.env'`, llb.AddCDIDevice(llb.CDIDeviceName("vendor1.com/device=foo")))
+	run(`sh -c 'env|sort | tee bar.env'`, llb.AddCDIDevice(llb.CDIDeviceName("vendor2.com/device=bar")))
+	run(`ls`, llb.AddCDIDevice(llb.CDIDeviceName("vendor3.com/device=baz"), llb.CDIDeviceOptional))
+
+	def, err := st.Marshal(sb.Context())
+	require.NoError(t, err)
+
+	destDir := t.TempDir()
+
+	_, err = c.Solve(sb.Context(), def, SolveOpt{
+		Exports: []ExportEntry{
+			{
+				Type:      ExporterLocal,
+				OutputDir: destDir,
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	dt, err := os.ReadFile(filepath.Join(destDir, "foo.env"))
+	require.NoError(t, err)
+	require.Contains(t, strings.TrimSpace(string(dt)), `FOO=injected`)
+
+	dt2, err := os.ReadFile(filepath.Join(destDir, "bar.env"))
+	require.NoError(t, err)
+	require.Contains(t, strings.TrimSpace(string(dt2)), `BAR=injected`)
+}
+
+func testCDINotAllowed(t *testing.T, sb integration.Sandbox) {
+	if sb.Rootless() {
+		t.SkipNow()
+	}
+
+	integration.SkipOnPlatform(t, "windows")
+	workers.CheckFeatureCompat(t, sb, workers.FeatureCDI)
+	c, err := New(sb.Context(), sb.Address())
+	require.NoError(t, err)
+	defer c.Close()
+
+	require.NoError(t, os.WriteFile(filepath.Join(sb.CDISpecDir(), "vendor1-device.yaml"), []byte(`
+cdiVersion: "0.6.0"
+kind: "vendor1.com/device"
+devices:
+- name: foo
+  containerEdits:
+    env:
+    - FOO=injected
+`), 0600))
+
+	busybox := llb.Image("busybox:latest")
+	st := llb.Scratch()
+
+	run := func(cmd string, ro ...llb.RunOption) {
+		st = busybox.Run(append(ro, llb.Shlex(cmd), llb.Dir("/wd"))...).AddMount("/wd", st)
+	}
+
+	run(`sh -c 'env|sort | tee foo.env'`, llb.AddCDIDevice(llb.CDIDeviceName("vendor1.com/device=foo")))
+
+	def, err := st.Marshal(sb.Context())
+	require.NoError(t, err)
+
+	destDir := t.TempDir()
+
+	_, err = c.Solve(sb.Context(), def, SolveOpt{
+		Exports: []ExportEntry{
+			{
+				Type:      ExporterLocal,
+				OutputDir: destDir,
+			},
+		},
+	}, nil)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "requested by the build but not allowed")
+}
+
+func testCDIEntitlement(t *testing.T, sb integration.Sandbox) {
+	if sb.Rootless() {
+		t.SkipNow()
+	}
+
+	integration.SkipOnPlatform(t, "windows")
+	workers.CheckFeatureCompat(t, sb, workers.FeatureCDI)
+	c, err := New(sb.Context(), sb.Address())
+	require.NoError(t, err)
+	defer c.Close()
+
+	require.NoError(t, os.WriteFile(filepath.Join(sb.CDISpecDir(), "vendor1-device.yaml"), []byte(`
+cdiVersion: "0.6.0"
+kind: "vendor1.com/device"
+devices:
+- name: foo
+  containerEdits:
+    env:
+    - FOO=injected
+`), 0600))
+
+	busybox := llb.Image("busybox:latest")
+	st := llb.Scratch()
+
+	run := func(cmd string, ro ...llb.RunOption) {
+		st = busybox.Run(append(ro, llb.Shlex(cmd), llb.Dir("/wd"))...).AddMount("/wd", st)
+	}
+
+	run(`sh -c 'env|sort | tee foo.env'`, llb.AddCDIDevice(llb.CDIDeviceName("vendor1.com/device=foo")))
+
+	def, err := st.Marshal(sb.Context())
+	require.NoError(t, err)
+
+	destDir := t.TempDir()
+
+	_, err = c.Solve(sb.Context(), def, SolveOpt{
+		AllowedEntitlements: []string{"device=vendor1.com/device"},
+		Exports: []ExportEntry{
+			{
+				Type:      ExporterLocal,
+				OutputDir: destDir,
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	dt, err := os.ReadFile(filepath.Join(destDir, "foo.env"))
+	require.NoError(t, err)
+	require.Contains(t, strings.TrimSpace(string(dt)), `FOO=injected`)
+}
+
+func testCDIFirst(t *testing.T, sb integration.Sandbox) {
+	if sb.Rootless() {
+		t.SkipNow()
+	}
+
+	integration.SkipOnPlatform(t, "windows")
+	workers.CheckFeatureCompat(t, sb, workers.FeatureCDI)
+	c, err := New(sb.Context(), sb.Address())
+	require.NoError(t, err)
+	defer c.Close()
+
+	require.NoError(t, os.WriteFile(filepath.Join(sb.CDISpecDir(), "vendor1-device.yaml"), []byte(`
+cdiVersion: "0.6.0"
+kind: "vendor1.com/device"
+devices:
+- name: foo
+  containerEdits:
+    env:
+    - FOO=injected
+- name: bar
+  containerEdits:
+    env:
+    - BAR=injected
+- name: baz
+  containerEdits:
+    env:
+    - BAZ=injected
+- name: qux
+  containerEdits:
+    env:
+    - QUX=injected
+annotations:
+  org.mobyproject.buildkit.device.autoallow: true
+`), 0600))
+
+	busybox := llb.Image("busybox:latest")
+	st := llb.Scratch()
+
+	run := func(cmd string, ro ...llb.RunOption) {
+		st = busybox.Run(append(ro, llb.Shlex(cmd), llb.Dir("/wd"))...).AddMount("/wd", st)
+	}
+
+	run(`sh -c 'env|sort | tee first.env'`, llb.AddCDIDevice(llb.CDIDeviceName("vendor1.com/device")))
+
+	def, err := st.Marshal(sb.Context())
+	require.NoError(t, err)
+
+	destDir := t.TempDir()
+
+	_, err = c.Solve(sb.Context(), def, SolveOpt{
+		Exports: []ExportEntry{
+			{
+				Type:      ExporterLocal,
+				OutputDir: destDir,
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	dt, err := os.ReadFile(filepath.Join(destDir, "first.env"))
+	require.NoError(t, err)
+	require.Contains(t, strings.TrimSpace(string(dt)), `BAR=injected`)
+	require.NotContains(t, strings.TrimSpace(string(dt)), `FOO=injected`)
+	require.NotContains(t, strings.TrimSpace(string(dt)), `BAZ=injected`)
+	require.NotContains(t, strings.TrimSpace(string(dt)), `QUX=injected`)
+}
+
+func testCDIWildcard(t *testing.T, sb integration.Sandbox) {
+	if sb.Rootless() {
+		t.SkipNow()
+	}
+
+	integration.SkipOnPlatform(t, "windows")
+	workers.CheckFeatureCompat(t, sb, workers.FeatureCDI)
+	c, err := New(sb.Context(), sb.Address())
+	require.NoError(t, err)
+	defer c.Close()
+
+	require.NoError(t, os.WriteFile(filepath.Join(sb.CDISpecDir(), "vendor1-device.yaml"), []byte(`
+cdiVersion: "0.6.0"
+kind: "vendor1.com/device"
+devices:
+- name: foo
+  containerEdits:
+    env:
+    - FOO=injected
+- name: bar
+  containerEdits:
+    env:
+    - BAR=injected
+annotations:
+  org.mobyproject.buildkit.device.autoallow: true
+`), 0600))
+
+	busybox := llb.Image("busybox:latest")
+	st := llb.Scratch()
+
+	run := func(cmd string, ro ...llb.RunOption) {
+		st = busybox.Run(append(ro, llb.Shlex(cmd), llb.Dir("/wd"))...).AddMount("/wd", st)
+	}
+
+	run(`sh -c 'env|sort | tee all.env'`, llb.AddCDIDevice(llb.CDIDeviceName("vendor1.com/device=*")))
+
+	def, err := st.Marshal(sb.Context())
+	require.NoError(t, err)
+
+	destDir := t.TempDir()
+
+	_, err = c.Solve(sb.Context(), def, SolveOpt{
+		Exports: []ExportEntry{
+			{
+				Type:      ExporterLocal,
+				OutputDir: destDir,
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	dt, err := os.ReadFile(filepath.Join(destDir, "all.env"))
+	require.NoError(t, err)
+	require.Contains(t, strings.TrimSpace(string(dt)), `FOO=injected`)
+	require.Contains(t, strings.TrimSpace(string(dt)), `BAR=injected`)
+}
+
+func testCDIClass(t *testing.T, sb integration.Sandbox) {
+	if sb.Rootless() {
+		t.SkipNow()
+	}
+
+	integration.SkipOnPlatform(t, "windows")
+	workers.CheckFeatureCompat(t, sb, workers.FeatureCDI)
+	c, err := New(sb.Context(), sb.Address())
+	require.NoError(t, err)
+	defer c.Close()
+
+	require.NoError(t, os.WriteFile(filepath.Join(sb.CDISpecDir(), "vendor1-device.yaml"), []byte(`
+cdiVersion: "0.6.0"
+kind: "vendor1.com/device"
+annotations:
+  foo.bar.baz: FOO
+  org.mobyproject.buildkit.device.autoallow: true
+devices:
+- name: foo
+  annotations:
+    org.mobyproject.buildkit.device.class: class1
+  containerEdits:
+    env:
+    - FOO=injected
+- name: bar
+  annotations:
+    org.mobyproject.buildkit.device.class: class1
+  containerEdits:
+    env:
+    - BAR=injected
+- name: baz
+  annotations:
+    org.mobyproject.buildkit.device.class: class2
+  containerEdits:
+    env:
+    - BAZ=injected
+- name: qux
+  containerEdits:
+    env:
+    - QUX=injected
+`), 0600))
+
+	busybox := llb.Image("busybox:latest")
+	st := llb.Scratch()
+
+	run := func(cmd string, ro ...llb.RunOption) {
+		st = busybox.Run(append(ro, llb.Shlex(cmd), llb.Dir("/wd"))...).AddMount("/wd", st)
+	}
+
+	run(`sh -c 'env|sort | tee class.env'`, llb.AddCDIDevice(llb.CDIDeviceName("vendor1.com/device=class1")))
+
+	def, err := st.Marshal(sb.Context())
+	require.NoError(t, err)
+
+	destDir := t.TempDir()
+
+	_, err = c.Solve(sb.Context(), def, SolveOpt{
+		Exports: []ExportEntry{
+			{
+				Type:      ExporterLocal,
+				OutputDir: destDir,
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	dt, err := os.ReadFile(filepath.Join(destDir, "class.env"))
+	require.NoError(t, err)
+	require.Contains(t, strings.TrimSpace(string(dt)), `FOO=injected`)
+	require.Contains(t, strings.TrimSpace(string(dt)), `BAR=injected`)
+	require.NotContains(t, strings.TrimSpace(string(dt)), `BAZ=injected`)
+	require.NotContains(t, strings.TrimSpace(string(dt)), `QUX=injected`)
 }
