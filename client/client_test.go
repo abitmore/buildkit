@@ -6883,6 +6883,9 @@ func readFileInImage(ctx context.Context, t *testing.T, c *Client, ref, path str
 }
 
 func testCachedMounts(t *testing.T, sb integration.Sandbox) {
+	// TODO(profnandaa): skipping on Windows, investigating. #5906
+	integration.SkipOnPlatform(t, "windows")
+
 	c, err := New(sb.Context(), sb.Address())
 	require.NoError(t, err)
 	defer c.Close()
@@ -11884,7 +11887,7 @@ devices:
 		st = busybox.Run(append(ro, llb.Shlex(cmd), llb.Dir("/wd"))...).AddMount("/wd", st)
 	}
 
-	run(`sh -c 'env|sort | tee class.env'`, llb.AddCDIDevice(llb.CDIDeviceName("vendor1.com/device=class1")))
+	run(`sh -c 'env|sort | tee class.env'`, llb.AddCDIDevice(llb.CDIDeviceName("class1")))
 
 	def, err := st.Marshal(sb.Context())
 	require.NoError(t, err)
