@@ -83,8 +83,13 @@ func readFileAt(dirfd int, filename string, buf []byte) (int64, error) {
 // https://github.com/containerd/nerdctl/pull/2723
 func withDetachedNetNSIfAny(ctx context.Context, fn func(context.Context) error) error {
 	if stateDir := os.Getenv("ROOTLESSKIT_STATE_DIR"); stateDir != "" {
-		detachedNetNS := filepath.Join(stateDir, "netns")
-		if _, err := os.Lstat(detachedNetNS); !errors.Is(err, os.ErrNotExist) {
+		root, err := os.OpenRoot(stateDir)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		if _, err := root.Lstat("netns"); !errors.Is(err, os.ErrNotExist) {
+			detachedNetNS := filepath.Join(stateDir, "netns")
 			return ns.WithNetNSPath(detachedNetNS, func(_ ns.NetNS) error {
 				ctx := context.WithValue(ctx, contextKeyDetachedNetNS, detachedNetNS)
 				bklog.G(ctx).Debugf("Entering RootlessKit's detached netns %q", detachedNetNS)
@@ -92,6 +97,8 @@ func withDetachedNetNSIfAny(ctx context.Context, fn func(context.Context) error)
 				bklog.G(ctx).WithError(err2).Debugf("Leaving RootlessKit's detached netns %q", detachedNetNS)
 				return err2
 			})
+		} else if err != nil {
+			return err
 		}
 	}
 	return fn(ctx)

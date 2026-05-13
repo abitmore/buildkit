@@ -1519,8 +1519,9 @@ func (cr *cacheRecord) finalize(ctx context.Context) error {
 	go func() {
 		cr.cm.mu.Lock()
 		defer cr.cm.mu.Unlock()
-		if err := mutable.remove(context.TODO(), true); err != nil {
-			bklog.G(ctx).Error(err)
+		cleanupCtx := context.WithoutCancel(ctx)
+		if err := mutable.remove(cleanupCtx, true); err != nil {
+			bklog.G(cleanupCtx).Error(err)
 		}
 	}()
 
