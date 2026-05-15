@@ -2016,13 +2016,17 @@ func testCheckSignatures(t *testing.T, keepGitDir bool, format string) {
 
 	fixturesBase := os.Getenv("BUILDKIT_TEST_SIGN_FIXTURES")
 
-	user1GPGPub, err := os.ReadFile(fixturesBase + "/user1.gpg.pub")
+	fixturesRoot, err := os.OpenRoot(fixturesBase)
+	require.NoError(t, err)
+	defer fixturesRoot.Close()
+
+	user1GPGPub, err := fixturesRoot.ReadFile("user1.gpg.pub")
 	require.NoError(t, err)
 
 	err = gitsign.VerifySignature(ob, user1GPGPub, nil)
 	require.NoError(t, err)
 
-	user2GPGPub, err := os.ReadFile(fixturesBase + "/user2.gpg.pub")
+	user2GPGPub, err := fixturesRoot.ReadFile("user2.gpg.pub")
 	require.NoError(t, err)
 
 	err = gitsign.VerifySignature(ob, user2GPGPub, nil)
@@ -2052,10 +2056,10 @@ func testCheckSignatures(t *testing.T, keepGitDir bool, format string) {
 	require.NoError(t, err)
 	require.Greater(t, len(ob.Signature), 50)
 
-	sshkey1, err := os.ReadFile(fixturesBase + "/user1.ssh.pub")
+	sshkey1, err := fixturesRoot.ReadFile("user1.ssh.pub")
 	require.NoError(t, err)
 
-	sshkey2, err := os.ReadFile(fixturesBase + "/user2.ssh.pub")
+	sshkey2, err := fixturesRoot.ReadFile("user2.ssh.pub")
 	require.NoError(t, err)
 
 	err = gitsign.VerifySignature(ob, sshkey2, nil)
@@ -2107,16 +2111,20 @@ func testVerifySignatures(t *testing.T, keepGitDir bool, format string) {
 
 	fixturesBase := os.Getenv("BUILDKIT_TEST_SIGN_FIXTURES")
 
-	user1GPGPub, err := os.ReadFile(fixturesBase + "/user1.gpg.pub")
+	fixturesRoot, err := os.OpenRoot(fixturesBase)
+	require.NoError(t, err)
+	defer fixturesRoot.Close()
+
+	user1GPGPub, err := fixturesRoot.ReadFile("user1.gpg.pub")
 	require.NoError(t, err)
 
-	user2GPGPub, err := os.ReadFile(fixturesBase + "/user2.gpg.pub")
+	user2GPGPub, err := fixturesRoot.ReadFile("user2.gpg.pub")
 	require.NoError(t, err)
 
-	user1SSHPub, err := os.ReadFile(fixturesBase + "/user1.ssh.pub")
+	user1SSHPub, err := fixturesRoot.ReadFile("user1.ssh.pub")
 	require.NoError(t, err)
 
-	user2SSHPub, err := os.ReadFile(fixturesBase + "/user2.ssh.pub")
+	user2SSHPub, err := fixturesRoot.ReadFile("user2.ssh.pub")
 	require.NoError(t, err)
 
 	// a/v1.2.3 commit is signed by user1 gpg
@@ -2672,7 +2680,7 @@ func logProgressStreams(ctx context.Context, t *testing.T) context.Context {
 	go func() {
 		defer close(done)
 		for {
-			prog, err := pr.Read(context.Background())
+			prog, err := pr.Read(ctx)
 			if err != nil {
 				return
 			}
@@ -2714,7 +2722,10 @@ func TestResetSnapshotMtimes(t *testing.T) {
 	require.NoError(t, os.Symlink("file.txt", filepath.Join(dir, "link")))
 
 	target := time.Date(2023, 6, 15, 12, 0, 0, 0, time.UTC)
-	require.NoError(t, resetSnapshotMtimes(dir, target))
+	root, err := os.OpenRoot(dir)
+	require.NoError(t, err)
+	require.NoError(t, resetSnapshotMtimes(root, target))
+	require.NoError(t, root.Close())
 
 	// Regular files should have mtime set
 	fi, err := os.Lstat(filepath.Join(dir, "file.txt"))

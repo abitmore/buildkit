@@ -646,7 +646,7 @@ func runcProcessHandle(ctx context.Context, killer procKiller) (*procHandle, con
 		for {
 			select {
 			case <-ctx.Done():
-				killCtx, timeout := context.WithCancelCause(context.Background())                                         //nolint:govet
+				killCtx, timeout := context.WithCancelCause(context.WithoutCancel(ctx))                                   //nolint:govet
 				killCtx, _ = context.WithTimeoutCause(killCtx, 7*time.Second, errors.WithStack(context.DeadlineExceeded)) //nolint:govet
 				if err := p.killer.Kill(killCtx); err != nil {
 					select {
